@@ -21,7 +21,7 @@ Add `PickableItems` in Xcode via **File → Add Package Dependencies…**, or ad
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/ata_tr53/PickableItems.git", from: "1.0.0")
+    .package(url: "https://github.com/ata-tr53/PickableItems.git", from: "1.0.0")
 ]
 ```
 

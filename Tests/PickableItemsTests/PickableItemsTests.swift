@@ -26,6 +26,10 @@ private struct MinimalItem: KeyboardPickableItem {
     let title: String
 }
 
+private enum MockSearchError: Error, Equatable {
+    case networkFailed
+}
+
 @Suite("Levenshtein Distance")
 struct LevenshteinTests {
     @Test func identicalStringsHaveZeroDistance() {
@@ -109,7 +113,6 @@ struct CoordinatorTests {
             useAmount: 10
         )
 
-        // Pure use amount: 100 > 60 > 10
         let useCoordinator = KeyboardPickableItemCoordinator(
             allItems: [lowUseClose, mediumUseExact, highUseAlias],
             selectedItems: [],
@@ -118,8 +121,6 @@ struct CoordinatorTests {
         useCoordinator.updateNotSelectedItems(text: "swift", debounce: false)
         #expect(useCoordinator.notSelectedItems.map(\.title) == ["Project Alpha", "Swift", "Swifty"])
 
-        // Mixed with default 2.0 alias penalty:
-        // Swift: (60+1)/1 = 61, Project Alpha (alias): (100+1)/(1*2) = 50.5, Swifty: (10+1)/1 = 11
         let mixedCoordinator = KeyboardPickableItemCoordinator(
             allItems: [lowUseClose, mediumUseExact, highUseAlias],
             selectedItems: [],
@@ -128,7 +129,6 @@ struct CoordinatorTests {
         mixedCoordinator.updateNotSelectedItems(text: "swift", debounce: false)
         #expect(mixedCoordinator.notSelectedItems.map(\.title) == ["Swift", "Project Alpha", "Swifty"])
 
-        // Pure distance: distance 0 beats distance 1
         let exactItem = MockItem(title: "Swift", useAmount: 1)
         let typoItem = MockItem(title: "Swiff", useAmount: 100)
         let distanceCoordinator = KeyboardPickableItemCoordinator(
@@ -154,7 +154,7 @@ struct CoordinatorTests {
         )
 
         coordinator.selectItem(original)
-        coordinator.selectItem(mutatedCopy) // Should be ignored because ID matches
+        coordinator.selectItem(mutatedCopy)
 
         #expect(coordinator.selectedItems.count == 1)
         #expect(coordinator.notSelectedItems.map(\.title) == ["Combine"])
@@ -177,5 +177,85 @@ struct CoordinatorTests {
 
         coordinator.allItems.append(second)
         #expect(coordinator.notSelectedItems.map(\.title) == ["Urgent", "Work"])
+    }
+
+    @Test func remoteSearchProviderPreservesServerOrderAndFiltersSelectedItems() async throws {
+        let selected = MockItem(title: "Already Picked", useAmount: 100)
+        let first = MockItem(title: "Server First", useAmount: 1)
+        let second = MockItem(title: "Server Second", useAmount: 50)
+
+        var receivedQueries: [String] = []
+        let coordinator = KeyboardPickableItemCoordinator<MockItem>(
+            selectedItems: [selected],
+            debounceDuration: .milliseconds(10)
+        ) { query in
+            receivedQueries.append(query)
+            return [first, selected, second]
+        }
+
+        coordinator.updateNotSelectedItems(text: "  angst  ", debounce: false)
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(receivedQueries == ["angst"])
+        #expect(coordinator.isLoading == false)
+        #expect(coordinator.notSelectedItems.map(\.title) == ["Server First", "Server Second"])
+
+        // Deselecting restores the item in server order without triggering another remote call
+        coordinator.deselectItem(selected)
+        #expect(receivedQueries.count == 1)
+        #expect(coordinator.notSelectedItems.map(\.title) == ["Server First", "Already Picked", "Server Second"])
+    }
+
+    @Test func remoteSearchProviderCapturesErrorsAndRecovers() async throws {
+        var shouldFail = true
+        let fallbackItem = MockItem(title: "Recovered")
+
+        let coordinator = KeyboardPickableItemCoordinator<MockItem>(
+            debounceDuration: .milliseconds(10)
+        ) { _ in
+            if shouldFail {
+                throw MockSearchError.networkFailed
+            }
+            return [fallbackItem]
+        }
+
+        coordinator.updateNotSelectedItems(text: "test", debounce: false)
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(coordinator.isLoading == false)
+        #expect(coordinator.searchError as? MockSearchError == .networkFailed)
+
+        shouldFail = false
+        coordinator.updateNotSelectedItems(text: "test2", debounce: false)
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(coordinator.isLoading == false)
+        #expect(coordinator.searchError == nil)
+        #expect(coordinator.notSelectedItems.map(\.title) == ["Recovered"])
+    }
+
+    @Test func remoteSearchProviderCancelsStaleRequests() async throws {
+        let staleItem = MockItem(title: "Stale")
+        let freshItem = MockItem(title: "Fresh")
+
+        let coordinator = KeyboardPickableItemCoordinator<MockItem>(
+            debounceDuration: .milliseconds(10)
+        ) { query in
+            if query == "slow" {
+                try await Task.sleep(for: .milliseconds(100))
+                return [staleItem]
+            }
+            try await Task.sleep(for: .milliseconds(10))
+            return [freshItem]
+        }
+
+        coordinator.updateNotSelectedItems(text: "slow", debounce: false)
+        try await Task.sleep(for: .milliseconds(15))
+        coordinator.updateNotSelectedItems(text: "fast", debounce: false)
+
+        try await Task.sleep(for: .milliseconds(130))
+
+        #expect(coordinator.isLoading == false)
+        #expect(coordinator.notSelectedItems.map(\.title) == ["Fresh"])
     }
 }

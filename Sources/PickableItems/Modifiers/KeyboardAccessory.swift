@@ -120,7 +120,7 @@ internal struct KeyboardAccessoryTextFieldModifier<Item: KeyboardPickableItem>: 
                     text = ""
                     coordinator.updateNotSelectedItems(text: "", debounce: false)
                 } else {
-                    coordinator.updateNotSelectedItems(text: text, debounce: false)
+                    coordinator.reapplySelectionFilter()
                 }
             }
             .onChange(of: text) { _, newValue in

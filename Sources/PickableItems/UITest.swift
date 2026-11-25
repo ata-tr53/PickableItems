@@ -181,5 +181,6 @@ private struct TestAssignee: KeyboardPickableItem {
 
 #Preview {
     UITest()
+        .frame(minWidth: 300, minHeight: 500)
 }
 #endif

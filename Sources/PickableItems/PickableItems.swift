@@ -4,9 +4,12 @@ import SwiftUI
 @MainActor
 @Observable
 public class KeyboardPickableItemCoordinator<Item: KeyboardPickableItem> {
-    /// The complete list of items available to pick from. Updating this refreshes `notSelectedItems`.
+    /// The complete list of items available to pick from in local mode. Updating this refreshes `notSelectedItems`.
     public var allItems: [Item] {
-        didSet { internalSearch(text: lastQuery) }
+        didSet {
+            guard searchProvider == nil else { return }
+            internalLocalSearch(text: lastQuery)
+        }
     }
 
     /// The currently filtered and ranked items that have not yet been selected.
@@ -15,35 +18,54 @@ public class KeyboardPickableItemCoordinator<Item: KeyboardPickableItem> {
     /// The items currently selected by the user.
     public var selectedItems: [Item]
 
-    /// The ranking strategy used to order search results. Updating this re-ranks `notSelectedItems`.
+    /// The ranking strategy used to order search results in local mode. Updating this re-ranks `notSelectedItems`.
     public var sortingStrategy: KeyboardPickableItemSortingStrategy {
-        didSet { internalSearch(text: lastQuery) }
+        didSet {
+            guard searchProvider == nil else { return }
+            internalLocalSearch(text: lastQuery)
+        }
     }
+
+    /// Delay before triggering a search after text changes (defaults to `300ms`).
+    public var debounceDuration: Duration
 
     /// Optional callback invoked immediately after an item is selected.
     public var onSelect: ((Item) -> Void)?
 
+    /// `true` while an async `searchProvider` request is in flight. Always `false` in local mode.
+    public private(set) var isLoading: Bool = false
+
+    /// The most recent non-cancellation error thrown by `searchProvider`, cleared when a new search starts.
+    public private(set) var searchError: (any Error)? = nil
+
     internal var activeAccessoryID: UUID? = nil
 
+    private let searchProvider: ((String) async throws -> [Item])?
     private var searchTask: Task<Void, Never>? = nil
+    private var searchGeneration: Int = 0
     private var lastQuery: String = ""
+    private var lastRemoteResults: [Item] = []
 
-    /// Creates a new coordinator for the given items.
+    /// Creates a coordinator backed by a local in-memory list of items with built-in fuzzy search and ranking.
     /// - Parameters:
     ///   - allItems: The full pool of pickable items.
     ///   - selectedItems: Initially selected items (defaults to empty).
     ///   - sortingStrategy: Strategy used to rank matching items (defaults to `.mixed()`).
+    ///   - debounceDuration: Delay before searching while the user types (defaults to `300ms`).
     ///   - onSelect: Optional callback invoked whenever an item is selected.
     public init(
         allItems: [Item],
         selectedItems: [Item] = [],
         sortingStrategy: KeyboardPickableItemSortingStrategy = .mixed(),
+        debounceDuration: Duration = .milliseconds(300),
         onSelect: ((Item) -> Void)? = nil
     ) {
         self.allItems = allItems
         self.selectedItems = selectedItems
         self.sortingStrategy = sortingStrategy
+        self.debounceDuration = debounceDuration
         self.onSelect = onSelect
+        self.searchProvider = nil
 
         let selectedIDs = Set(selectedItems.map(\.id))
         self.notSelectedItems = allItems
@@ -51,22 +73,92 @@ public class KeyboardPickableItemCoordinator<Item: KeyboardPickableItem> {
             .sorted { $0.useAmount > $1.useAmount }
     }
 
+    /// Creates a coordinator backed by an external or async search provider (such as a remote autocomplete API).
+    /// Results returned by `searchProvider` keep their original order and are only filtered to exclude `selectedItems`.
+    /// - Parameters:
+    ///   - selectedItems: Initially selected items (defaults to empty).
+    ///   - debounceDuration: Delay before invoking `searchProvider` while the user types (defaults to `300ms`).
+    ///   - onSelect: Optional callback invoked whenever an item is selected.
+    ///   - searchProvider: Closure that receives the trimmed search query and returns pre-sorted matching items.
+    public init(
+        selectedItems: [Item] = [],
+        debounceDuration: Duration = .milliseconds(300),
+        onSelect: ((Item) -> Void)? = nil,
+        searchProvider: @escaping (String) async throws -> [Item]
+    ) {
+        self.allItems = []
+        self.notSelectedItems = []
+        self.selectedItems = selectedItems
+        self.sortingStrategy = .mixed()
+        self.debounceDuration = debounceDuration
+        self.onSelect = onSelect
+        self.searchProvider = searchProvider
+    }
+
     /// Returns `true` when any `TextField` bridged to this coordinator is currently focused.
     public var isTextFieldFocused: Bool { activeAccessoryID != nil }
 
     internal func updateNotSelectedItems(text: String, debounce: Bool = true) {
         searchTask?.cancel()
+        searchGeneration += 1
+        let generation = searchGeneration
         lastQuery = text
 
+        if let provider = searchProvider {
+            let trimmedQuery = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            searchError = nil
+            isLoading = true
+
+            searchTask = Task { [weak self] in
+                if debounce {
+                    do {
+                        try await Task.sleep(for: self?.debounceDuration ?? .milliseconds(300))
+                    } catch {
+                        return
+                    }
+                }
+                guard !Task.isCancelled, let self, self.searchGeneration == generation else { return }
+
+                do {
+                    let results = try await provider(trimmedQuery)
+                    guard !Task.isCancelled, self.searchGeneration == generation else { return }
+                    self.lastRemoteResults = results
+                    let selectedIDs = Set(self.selectedItems.map(\.id))
+                    self.notSelectedItems = results.filter { !selectedIDs.contains($0.id) }
+                    self.isLoading = false
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled, self.searchGeneration == generation else { return }
+                    self.searchError = error
+                    self.isLoading = false
+                }
+            }
+            return
+        }
+
         if !debounce {
-            internalSearch(text: text)
+            internalLocalSearch(text: text)
             return
         }
 
         searchTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            guard !Task.isCancelled else { return }
-            self?.internalSearch(text: text)
+            do {
+                try await Task.sleep(for: self?.debounceDuration ?? .milliseconds(300))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self, self.searchGeneration == generation else { return }
+            self.internalLocalSearch(text: text)
+        }
+    }
+
+    internal func reapplySelectionFilter() {
+        if searchProvider != nil {
+            let selectedIDs = Set(selectedItems.map(\.id))
+            notSelectedItems = lastRemoteResults.filter { !selectedIDs.contains($0.id) }
+        } else {
+            internalLocalSearch(text: lastQuery)
         }
     }
 
@@ -79,7 +171,7 @@ public class KeyboardPickableItemCoordinator<Item: KeyboardPickableItem> {
         }
     }
 
-    private func internalSearch(text: String) {
+    private func internalLocalSearch(text: String) {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let selectedIDs = Set(selectedItems.map(\.id))
         let unselected = allItems.filter { !selectedIDs.contains($0.id) }
@@ -149,7 +241,7 @@ public class KeyboardPickableItemCoordinator<Item: KeyboardPickableItem> {
         withAnimation(.spring) {
             selectedItems.removeAll { $0.id == item.id }
         }
-        internalSearch(text: lastQuery)
+        reapplySelectionFilter()
     }
 }
 
