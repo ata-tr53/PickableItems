@@ -13,10 +13,10 @@ internal struct KeyboardAccessoryViewModifier<
     TrailingAccessory: View
 >: ViewModifier {
     @Environment(KeyboardPickableItemCoordinator<Item>.self) private var coordinator
-    
+
     let leadingAccessory: () -> LeadingAccessory
     let trailingAccessory: () -> TrailingAccessory
-    
+
     func body(content: Content) -> some View {
         if #available(anyAppleOS 26.0, *) {
             content
@@ -34,13 +34,15 @@ internal struct KeyboardAccessoryViewModifier<
                 }
         }
     }
-    
+
     @ViewBuilder
     private var mainView: some View {
         HStack(spacing: 0) {
-            leadingAccessory()
-                .padding(.leading)
-            
+            if LeadingAccessory.self != EmptyView.self {
+                leadingAccessory()
+                    .padding(.leading)
+            }
+
             keyboardAccessoryView
                 .mask {
                     LinearGradient(
@@ -54,12 +56,14 @@ internal struct KeyboardAccessoryViewModifier<
                         endPoint: .trailing
                     ).ignoresSafeArea()
                 }
-            
-            trailingAccessory()
-                .padding(.trailing)
+
+            if TrailingAccessory.self != EmptyView.self {
+                trailingAccessory()
+                    .padding(.trailing)
+            }
         }.padding(.bottom)
     }
-    
+
     @ViewBuilder
     private var keyboardAccessoryView: some View {
         ScrollView(.horizontal) {
@@ -79,7 +83,7 @@ internal struct KeyboardAccessoryViewModifier<
         }
         .scrollIndicators(.hidden)
     }
-    
+
     @ViewBuilder
     private func keyboardItemButton(for item: Item) -> some View {
         Button {
@@ -91,32 +95,36 @@ internal struct KeyboardAccessoryViewModifier<
 internal struct KeyboardAccessoryTextFieldModifier<Item: KeyboardPickableItem>: ViewModifier {
     @Environment(KeyboardPickableItemCoordinator<Item>.self) private var coordinator
     @FocusState private var isFocused: Bool
-    
+
     @Binding var text: String
-    
+    let clearOnSelect: Bool
+
     @State private var viewID: UUID = UUID()
-    
+
     func body(content: Content) -> some View {
         content
             .focused($isFocused)
             .onChange(of: isFocused) { _, newValue in
                 if newValue {
                     coordinator.activeAccessoryID = viewID
-                    coordinator.updateNotSelectedItems(text: text)
+                    coordinator.updateNotSelectedItems(text: text, debounce: false)
                 } else {
                     if coordinator.activeAccessoryID == viewID {
                         coordinator.activeAccessoryID = nil
                     }
                 }
             }
-            
-            .onChange(of: coordinator.selectedItems) { _, _ in
-                if isFocused {
+            .onChange(of: coordinator.selectedItems) { oldValue, newValue in
+                guard isFocused else { return }
+                if clearOnSelect && newValue.count > oldValue.count {
+                    text = ""
+                    coordinator.updateNotSelectedItems(text: "", debounce: false)
+                } else {
                     coordinator.updateNotSelectedItems(text: text, debounce: false)
                 }
             }
-
             .onChange(of: text) { _, newValue in
+                guard isFocused else { return }
                 coordinator.updateNotSelectedItems(text: newValue)
             }
     }
@@ -124,6 +132,7 @@ internal struct KeyboardAccessoryTextFieldModifier<Item: KeyboardPickableItem>: 
 
 
 public extension View {
+    /// Attaches a keyboard accessory bar for picking items managed by `coordinator`, with both leading and trailing accessory views.
     func keyboardItemPickerContainer<
         Item: KeyboardPickableItem,
         LeadingAccessory: View,
@@ -139,7 +148,8 @@ public extension View {
             ))
             .environment(coordinator)
     }
-    
+
+    /// Attaches a keyboard accessory bar for picking items managed by `coordinator`, with a leading accessory view.
     func keyboardItemPickerContainer<
         Item: KeyboardPickableItem,
         LeadingAccessory: View
@@ -153,7 +163,8 @@ public extension View {
             ))
             .environment(coordinator)
     }
-    
+
+    /// Attaches a keyboard accessory bar for picking items managed by `coordinator`, with a trailing accessory view.
     func keyboardItemPickerContainer<
         Item: KeyboardPickableItem,
         TrailingAccessory: View
@@ -167,8 +178,8 @@ public extension View {
             ))
             .environment(coordinator)
     }
-    
-    
+
+    /// Attaches a keyboard accessory bar for picking items managed by `coordinator`.
     func keyboardItemPickerContainer<Item: KeyboardPickableItem>(
         coordinator: KeyboardPickableItemCoordinator<Item>
     ) -> some View {
@@ -179,8 +190,17 @@ public extension View {
             ))
             .environment(coordinator)
     }
-    
-    func keyboardItemPickerFocusBridge<Item: KeyboardPickableItem>(type: Item.Type, text: Binding<String>) -> some View {
-        self.modifier(KeyboardAccessoryTextFieldModifier<Item>(text: text))
+
+    /// Connects a `TextField` to the nearest `keyboardItemPickerContainer` matching `type`.
+    /// - Parameters:
+    ///   - type: The `KeyboardPickableItem` type managed by the target coordinator.
+    ///   - text: Binding to the text field's query string.
+    ///   - clearOnSelect: When `true`, clears `text` automatically after the user taps a suggestion chip.
+    func keyboardItemPickerFocusBridge<Item: KeyboardPickableItem>(
+        type: Item.Type,
+        text: Binding<String>,
+        clearOnSelect: Bool = false
+    ) -> some View {
+        self.modifier(KeyboardAccessoryTextFieldModifier<Item>(text: text, clearOnSelect: clearOnSelect))
     }
 }

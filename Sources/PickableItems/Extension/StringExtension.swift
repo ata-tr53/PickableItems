@@ -6,24 +6,32 @@
 //
 
 internal extension String {
-    func levenshteinDistance(to string: String) -> Int {
-        if self.isEmpty { return string.count }
-        if string.isEmpty { return self.count }
-        
-        let empty = [Int](repeating: 0, count: string.count + 1)
-        var last = [Int](0...string.count)
-        
-        for (i, selfChar) in self.enumerated() {
-            var current = [i + 1] + empty[1...]
-            for (j, otherChar) in string.enumerated() {
-                if selfChar == otherChar {
-                    current[j + 1] = last[j]
+    func levenshteinDistance(to other: String) -> Int {
+        let lhs = Array(self)
+        let rhs = Array(other)
+
+        if lhs.isEmpty { return rhs.count }
+        if rhs.isEmpty { return lhs.count }
+
+        var previousRow = Array(0...rhs.count)
+        var currentRow = [Int](repeating: 0, count: rhs.count + 1)
+
+        for i in 0..<lhs.count {
+            currentRow[0] = i + 1
+            for j in 0..<rhs.count {
+                if lhs[i] == rhs[j] {
+                    currentRow[j + 1] = previousRow[j]
                 } else {
-                    current[j + 1] = Swift.min(last[j], last[j + 1], current[j]) + 1
+                    currentRow[j + 1] = Swift.min(
+                        previousRow[j],
+                        previousRow[j + 1],
+                        currentRow[j]
+                    ) + 1
                 }
             }
-            last = current
+            swap(&previousRow, &currentRow)
         }
-        return last.last!
+
+        return previousRow[rhs.count]
     }
 }

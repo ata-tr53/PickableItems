@@ -22,8 +22,11 @@ let package = Package(
             name: "PickableItems",
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
-            ],
+            ]
         ),
-
+        .testTarget(
+            name: "PickableItemsTests",
+            dependencies: ["PickableItems"]
+        ),
     ]
 )

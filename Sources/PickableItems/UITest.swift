@@ -5,6 +5,7 @@
 //  Created by İsmail Ata Bayraktutan on 8.09.2026.
 //
 
+#if DEBUG
 import SwiftUI
 
 private struct UITest: View {
@@ -12,7 +13,7 @@ private struct UITest: View {
     @State private var tagText: String = ""
     @State private var categoryText: String = ""
     @State private var assigneeText: String = ""
-    
+
     // MARK: - Coordinators
     @State private var tagCoordinator = KeyboardPickableItemCoordinator<TestTag>(
         allItems: [
@@ -22,7 +23,7 @@ private struct UITest: View {
         ],
         selectedItems: []
     )
-    
+
     @State private var categoryCoordinator = KeyboardPickableItemCoordinator<TestCategory>(
         allItems: [
             TestCategory(title: "Work", useAmount: 50),
@@ -31,7 +32,7 @@ private struct UITest: View {
         ],
         selectedItems: []
     )
-    
+
     @State private var assigneeCoordinator = KeyboardPickableItemCoordinator<TestAssignee>(
         allItems: [
             TestAssignee(title: "Alice", useAmount: 5),
@@ -40,15 +41,15 @@ private struct UITest: View {
         ],
         selectedItems: []
     )
-    
+
     var body: some View {
         NavigationStack {
             Form {
                 // MARK: - Section 1: Tags
                 Section {
                     TextField("Search tags...", text: $tagText)
-                        .keyboardItemPickerFocusBridge(type: TestTag.self, text: $tagText)
-                    
+                        .keyboardItemPickerFocusBridge(type: TestTag.self, text: $tagText, clearOnSelect: true)
+
                     if !tagCoordinator.selectedItems.isEmpty {
                         SelectedItemsView(items: tagCoordinator.selectedItems) { item in
                             tagCoordinator.deselectItem(item)
@@ -57,12 +58,12 @@ private struct UITest: View {
                 } header: {
                     Text("Tags")
                 }
-                
+
                 // MARK: - Section 2: Categories
                 Section {
                     TextField("Search categories...", text: $categoryText)
                         .keyboardItemPickerFocusBridge(type: TestCategory.self, text: $categoryText)
-                    
+
                     if !categoryCoordinator.selectedItems.isEmpty {
                         SelectedItemsView(items: categoryCoordinator.selectedItems) { item in
                             categoryCoordinator.deselectItem(item)
@@ -71,12 +72,12 @@ private struct UITest: View {
                 } header: {
                     Text("Categories")
                 }
-                
+
                 // MARK: - Section 3: Assignees
                 Section {
                     TextField("Search assignees...", text: $assigneeText)
                         .keyboardItemPickerFocusBridge(type: TestAssignee.self, text: $assigneeText)
-                    
+
                     if !assigneeCoordinator.selectedItems.isEmpty {
                         SelectedItemsView(items: assigneeCoordinator.selectedItems) { item in
                             assigneeCoordinator.deselectItem(item)
@@ -87,9 +88,9 @@ private struct UITest: View {
                 }
             }
             .navigationTitle("Task Details")
-            
+
             // MARK: - Container Modifiers
-            
+
             // 1. Tags with dynamic text and a clear button
             .keyboardItemPickerContainer(coordinator: tagCoordinator) {
                 Text("\(tagCoordinator.selectedItems.count) Selected")
@@ -106,7 +107,7 @@ private struct UITest: View {
                 }
                 .disabled(tagText.isEmpty)
             }
-            
+
             // 2. Categories with an icon and an Add button
             .keyboardItemPickerContainer(coordinator: categoryCoordinator) {
                 Image(systemName: "folder.fill")
@@ -120,7 +121,7 @@ private struct UITest: View {
                 .controlSize(.small)
                 .tint(.blue)
             }
-            
+
             // 3. Assignees using the default extension (No accessories)
             .keyboardItemPickerContainer(coordinator: assigneeCoordinator)
         }
@@ -131,7 +132,7 @@ private struct UITest: View {
 private struct SelectedItemsView<Item: KeyboardPickableItem>: View {
     var items: [Item]
     var onRemove: (Item) -> Void
-    
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
@@ -162,7 +163,6 @@ private struct TestTag: KeyboardPickableItem {
     let title: String
     var secondaryNames: [String] = []
     var useAmount: Int = 0
-    static func < (lhs: TestTag, rhs: TestTag) -> Bool { lhs.title < rhs.title }
 }
 
 private struct TestCategory: KeyboardPickableItem {
@@ -170,7 +170,6 @@ private struct TestCategory: KeyboardPickableItem {
     let title: String
     var secondaryNames: [String] = []
     var useAmount: Int = 0
-    static func < (lhs: TestCategory, rhs: TestCategory) -> Bool { lhs.title < rhs.title }
 }
 
 private struct TestAssignee: KeyboardPickableItem {
@@ -178,9 +177,9 @@ private struct TestAssignee: KeyboardPickableItem {
     let title: String
     var secondaryNames: [String] = []
     var useAmount: Int = 0
-    static func < (lhs: TestAssignee, rhs: TestAssignee) -> Bool { lhs.title < rhs.title }
 }
 
 #Preview {
     UITest()
 }
+#endif
